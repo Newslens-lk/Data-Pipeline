@@ -1,0 +1,40 @@
+# Airflow itself is provided by the managed service (MWAA/Composer/ADF) or the
+# apache/airflow base image locally — don't pin apache-airflow here, it'll
+# conflict with the platform's own constraints file. These are your DAG's
+# additional dependencies, installed on top of that base image.
+
+# Scraping
+requests==2.32.3
+feedparser==6.0.11
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Preprocessing
+langdetect==1.0.9
+
+# ML
+torch==2.4.1
+transformers==4.44.2
+sentence-transformers==3.0.1
+hdbscan==0.8.38.post1
+numpy==1.26.4
+scikit-learn==1.5.1
+
+# LLM
+anthropic==0.34.2
+
+# Config
+pyyaml==6.0.2
+
+# Cloud provider hooks (uncomment whichever you deploy on; managed Airflow
+# usually bundles these already, listed here for local dev via docker-compose)
+# apache-airflow-providers-amazon
+# apache-airflow-providers-google
+# apache-airflow-providers-microsoft-azure
+apache-airflow-providers-postgres==5.12.0
+
+# Optional external vector DB (only if not using pgvector)
+# qdrant-client==1.11.0
+
+# Testing
+pytest==8.3.2

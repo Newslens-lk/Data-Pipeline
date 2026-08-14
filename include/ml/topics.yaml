@@ -1,0 +1,14 @@
+# Fixed taxonomy for topic assignment. If you'd rather let the LLM propose
+# free-form topics (and reconcile duplicates later with embedding similarity),
+# set CONFIG.topic_taxonomy_path = None and adjust topic_assignment.py's prompt.
+
+- politics
+- world
+- business
+- technology
+- science
+- health
+- sports
+- entertainment
+- climate
+- other

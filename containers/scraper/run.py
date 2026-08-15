@@ -11,6 +11,7 @@ Environment variables:
     STORAGE_BUCKET    - bucket name (e.g. "newslens-pipeline")
     AWS_ACCESS_KEY_ID - S3/MinIO access key
     AWS_SECRET_ACCESS_KEY - S3/MinIO secret key
+    SCRAPE_TIMEOUT    - max seconds per source (default: 300)
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import signal
 
 import boto3
 
@@ -28,14 +30,21 @@ logger = logging.getLogger(__name__)
 RUN_DATE = os.environ.get("RUN_DATE", dt.date.today().isoformat())
 STORAGE_ENDPOINT = os.environ["STORAGE_ENDPOINT"]
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
+SCRAPE_TIMEOUT = int(os.environ.get("SCRAPE_TIMEOUT", "300"))
 
-# Sinhala sources only
+# Sinhala sources — skip AdaDeranaSinhalaLk (requires selenium read_selenium which is broken)
 SINHALA_SOURCES = [
-    "AdaDeranaSinhalaLk",
-    "AdaLk",
     "DivainaLk",
     "LankadeepaLk",
 ]
+
+
+class SourceTimeout(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise SourceTimeout()
 
 
 def get_s3_client():
@@ -51,57 +60,67 @@ def article_id(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
 
 
-def scrape_articles() -> list[dict]:
+def scrape_source(cls, name: str) -> list[dict]:
+    """Scrape a single source with a timeout."""
+    articles = []
+    scraped_at = dt.datetime.utcnow().isoformat()
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(SCRAPE_TIMEOUT)
+
+    try:
+        url_metadata_set = set()
+        for article in cls.gen_articles(url_metadata_set):
+            body = "\n\n".join(article.original_body_lines)
+            if len(body.strip()) < 50:
+                continue
+
+            articles.append({
+                "article_id": article_id(article.url),
+                "source": article.newspaper_id,
+                "url": article.url,
+                "title": article.original_title,
+                "body": body,
+                "language": article.original_lang,
+                "published_at": dt.datetime.utcfromtimestamp(
+                    article.time_ut
+                ).isoformat() if article.time_ut else None,
+                "scraped_at": scraped_at,
+            })
+        logger.info("Got %d articles from %s", len(articles), name)
+    except SourceTimeout:
+        logger.warning("Timeout after %ds scraping %s (got %d articles so far)",
+                       SCRAPE_TIMEOUT, name, len(articles))
+    except Exception:
+        logger.exception("Failed to scrape %s", name)
+    finally:
+        signal.alarm(0)
+
+    return articles
+
+
+def scrape_all() -> list[dict]:
     from news_lk3.custom_newspapers import (
-        AdaDeranaSinhalaLk,
-        AdaLk,
         DivainaLk,
         LankadeepaLk,
     )
 
     source_classes = {
-        "AdaDeranaSinhalaLk": AdaDeranaSinhalaLk,
-        "AdaLk": AdaLk,
         "DivainaLk": DivainaLk,
         "LankadeepaLk": LankadeepaLk,
     }
 
-    articles = []
-    scraped_at = dt.datetime.utcnow().isoformat()
-
+    all_articles = []
     for name in SINHALA_SOURCES:
         cls = source_classes[name]
         logger.info("Scraping %s ...", name)
-        try:
-            url_metadata_set = set()  # don't skip any URLs
-            count = 0
-            for article in cls.gen_articles(url_metadata_set):
-                body = "\n\n".join(article.original_body_lines)
-                if len(body.strip()) < 50:
-                    continue
+        all_articles.extend(scrape_source(cls, name))
 
-                articles.append({
-                    "article_id": article_id(article.url),
-                    "source": article.newspaper_id,
-                    "url": article.url,
-                    "title": article.original_title,
-                    "body": body,
-                    "language": article.original_lang,
-                    "published_at": dt.datetime.utcfromtimestamp(
-                        article.time_ut
-                    ).isoformat() if article.time_ut else None,
-                    "scraped_at": scraped_at,
-                })
-                count += 1
-            logger.info("Got %d articles from %s", count, name)
-        except Exception:
-            logger.exception("Failed to scrape %s", name)
-
-    return articles
+    return all_articles
 
 
 def main():
-    articles = scrape_articles()
+    articles = scrape_all()
 
     if not articles:
         logger.warning("No articles scraped. Exiting.")

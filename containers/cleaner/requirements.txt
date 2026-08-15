@@ -1,5 +1,2 @@
 # S3/MinIO access
 boto3
-
-# Language detection
-langdetect

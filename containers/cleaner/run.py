@@ -22,7 +22,6 @@ import re
 import unicodedata
 
 import boto3
-from langdetect import LangDetectException, detect
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -31,8 +30,6 @@ INPUT_KEY = os.environ["INPUT_KEY"]
 STORAGE_ENDPOINT = os.environ["STORAGE_ENDPOINT"]
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 MIN_BODY_CHARS = int(os.environ.get("MIN_BODY_CHARS", "50"))
-
-ALLOWED_LANGUAGES = {"si"}
 
 # Zero-width and invisible characters common in web-scraped Sinhala text
 _INVISIBLE_RE = re.compile(
@@ -77,13 +74,6 @@ def normalize_text(text: str) -> str:
     return text
 
 
-def detect_language(text: str) -> str:
-    try:
-        return detect(text[:1000])
-    except LangDetectException:
-        return "unknown"
-
-
 def deduplicate(articles: list[dict]) -> list[dict]:
     """Remove exact duplicates (same article_id) and near-duplicates (same first 300 chars)."""
     seen_ids: set[str] = set()
@@ -119,12 +109,6 @@ def clean_articles(raw_ndjson: str) -> list[dict]:
 
         # Filter: too short
         if len(article["body"]) < MIN_BODY_CHARS:
-            continue
-
-        # Filter: wrong language
-        lang = detect_language(article["body"])
-        if lang not in ALLOWED_LANGUAGES:
-            logger.debug("Skipping %s — detected language: %s", article["article_id"], lang)
             continue
 
         articles.append(article)

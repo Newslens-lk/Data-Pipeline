@@ -16,39 +16,29 @@
 # under the License.
 #
 
-# Basic Airflow cluster configuration for CeleryExecutor with Redis and PostgreSQL.
+# NewsLens Pipeline — Local Dev Stack
 #
-# WARNING: This configuration is for local development. Do not use it in a production deployment.
+# WARNING: Local development only. Not for production.
 #
-# This configuration supports basic configuration using environment variables or an .env file
-# The following variables are supported:
+# Services:
+#   postgres         — Airflow's internal metadata DB (DAG state, task history, variables, connections)
+#   airflow-apiserver — Web UI (port 8080) + REST API for triggering DAGs and managing config
+#   airflow-scheduler — Parses DAGs and runs tasks directly (LocalExecutor, no separate worker needed)
+#                       Docker socket mounted so DockerOperator can launch stage containers
+#   airflow-init      — One-shot: runs DB migrations and creates the admin user, then exits
+#   news-db           — Pipeline data warehouse: Postgres + pgvector (port 5433)
+#                       Stores articles, bias labels, embeddings, event clusters, summaries
+#   minio             — Local S3 replacement (port 9000 API, port 9001 console UI)
+#                       Holds intermediate NDJSON files between pipeline stages
 #
-# AIRFLOW_IMAGE_NAME           - Docker image name used to run Airflow.
-#                                Default: apache/airflow:3.3.1
-# AIRFLOW_UID                  - User ID in Airflow containers
-#                                Default: 50000
-# AIRFLOW_PROJ_DIR             - Base path to which all the files will be volumed.
-#                                Default: .
-# Those configurations are useful mostly in case of standalone testing/running Airflow in test/try-out mode
-#
-# _AIRFLOW_WWW_USER_USERNAME   - Username for the administrator account (if requested).
-#                                Default: airflow
-# _AIRFLOW_WWW_USER_PASSWORD   - Password for the administrator account (if requested).
-#                                Default: airflow
-# _PIP_ADDITIONAL_REQUIREMENTS - Additional PIP requirements to add when starting all containers.
-#                                Use this option ONLY for quick checks. Installing requirements at container
-#                                startup is done EVERY TIME the service is started.
-#                                A better way is to build a custom image or extend the official image
-#                                as described in https://airflow.apache.org/docs/docker-stack/build.html.
-#                                Default: ''
-#
-# Feel free to modify this file to suit your needs.
+# Env vars (set in .env):
+#   AIRFLOW_IMAGE_NAME  — Airflow image (default: apache/airflow:3.3.1)
+#   AIRFLOW_UID         — User ID in Airflow containers (default: 50000)
+#   FERNET_KEY          — Encryption key for Airflow connections/variables
 ---
 x-airflow-common:
   &airflow-common
-  # In order to add custom dependencies or upgrade provider distributions you can use your extended image.
-  # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
-  # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
+  # Shared config inherited by all Airflow services (apiserver, scheduler, init)
   image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.1}
   # build: .
   env_file:
@@ -87,6 +77,8 @@ x-airflow-common:
       condition: service_healthy
 
 services:
+  # Airflow's own metadata DB — stores DAG runs, task state, connections, variables.
+  # Separate from news-db (your pipeline's data warehouse).
   postgres:
     image: postgres:16
     environment:
@@ -102,6 +94,8 @@ services:
       start_period: 5s
     restart: always
 
+  # Web UI + REST API. Use this to trigger DAGs, view logs, manage variables/connections.
+  # http://localhost:8080 (default login: airflow/airflow)
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
@@ -119,6 +113,8 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # Parses DAG files, schedules runs, and executes tasks directly (LocalExecutor).
+  # Docker socket is mounted so DockerOperator can launch stage containers as siblings.
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
@@ -136,6 +132,8 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # One-shot init container: migrates Airflow DB schema, creates admin user, checks resources.
+  # Runs once on first `docker compose up`, then exits.
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash

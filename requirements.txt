@@ -1,9 +1,7 @@
 # Slim Airflow worker deps — only what runs inside the worker (cleaning + loading).
 # ML and scraping deps live in their own container images under containers/.
 
-# Preprocessing (cleaning stage runs in the worker)
-beautifulsoup4==4.12.3
-lxml==5.3.0
+# Preprocessing (cleaning stage runs in the worker — dedup, normalize, filter only)
 langdetect==1.0.9
 
 # Config

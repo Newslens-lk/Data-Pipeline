@@ -1,0 +1,12 @@
+# lk_news dependency
+scraper-nuuuwan
+
+# S3/MinIO access
+boto3
+
+# Selenium for JS-rendered sources (e.g. AdaDeranaSinhalaLk)
+selenium
+webdriver-manager
+
+# HTML parsing (used by lk_news internally)
+beautifulsoup4

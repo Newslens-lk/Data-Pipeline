@@ -12,6 +12,7 @@ pyyaml==6.0.2
 # Database migrations
 alembic==1.13.2
 sqlalchemy==2.0.32
+pgvector==0.3.2
 
 # Airflow providers
 apache-airflow-providers-postgres==5.12.0

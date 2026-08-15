@@ -44,5 +44,5 @@ fields, it's a valid swap.
 
 ### Data stores
 
-- **Object storage** (S3/GCS/Azure Blob) — intermediate NDJSON between stages
+- **Object storage** (AWS S3) — intermediate NDJSON between stages
 - **Postgres + pgvector** — final destination for articles, events, embeddings

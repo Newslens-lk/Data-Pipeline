@@ -237,7 +237,6 @@ services:
       - "5433:5432"
     volumes:
       - news-db-volume:/var/lib/postgresql/data
-      - ${AIRFLOW_PROJ_DIR:-.}/include/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${NEWS_DB_USER}"]
       interval: 10s

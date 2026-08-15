@@ -1,5 +1,10 @@
 import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
+
+# Add parent dir (include/db/) to sys.path so we can import models.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool

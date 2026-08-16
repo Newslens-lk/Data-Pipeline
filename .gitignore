@@ -6,4 +6,5 @@ __pycache__/
 .claude/
 venv/
 containers/bias-classifier-xgb/xgboost_model.joblib
+include/db/dataset.parquet
 

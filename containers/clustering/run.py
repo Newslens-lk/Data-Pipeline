@@ -8,8 +8,8 @@ Uses KNN with pgvector L2 distance for incremental cluster assignment.
 After individual assignment, unassigned articles are batch-clustered with
 HDBSCAN to discover new multi-article events.
 
-Writes cluster assignments NDJSON back to MinIO and updates the database.
-Prints the output key to stdout for Airflow to capture via XCom.
+Writes cluster assignments NDJSON to MinIO only. The loader container
+handles all database writes.
 
 Environment variables:
     INPUT_KEY             - MinIO key for embeddings NDJSON
@@ -155,7 +155,6 @@ def main():
 
     results = []
     unassigned = []
-    unassigned_indices = []
 
     # Phase 1: Try to assign each article to an existing cluster via KNN
     for i, record in enumerate(records):
@@ -164,15 +163,15 @@ def main():
         if event_id is not None:
             results.append({
                 "article_id": record["article_id"],
-                "event_id": event_id,
+                "event_id": str(event_id),
                 "cluster_method": "knn",
                 "distance": distance,
             })
-            logger.debug("Assigned %s to existing cluster %s (dist=%.4f)",
-                         record["article_id"], event_id, distance)
         else:
             unassigned.append(record)
-            unassigned_indices.append(i)
+
+    cur.close()
+    conn.close()
 
     logger.info("KNN assigned %d/%d articles to existing clusters",
                 len(results), len(records))
@@ -192,49 +191,22 @@ def main():
                 "distance": 0.0,
             })
 
-        # Insert new events into the database
-        for event_id in new_event_ids:
-            cluster_articles = [r for r in results if r["event_id"] == event_id]
-            cur.execute("""
-                INSERT INTO events (event_id, article_count, source_count)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (event_id) DO NOTHING
-            """, (event_id, len(cluster_articles), len(cluster_articles)))
-
         # Remaining unassigned become single-article events
         assigned_unassigned = set(new_clusters.keys())
         for idx, record in enumerate(unassigned):
             if idx not in assigned_unassigned:
-                single_event_id = str(uuid.uuid4())
                 results.append({
                     "article_id": record["article_id"],
-                    "event_id": single_event_id,
+                    "event_id": str(uuid.uuid4()),
                     "cluster_method": "single",
                     "distance": 0.0,
                 })
-                cur.execute("""
-                    INSERT INTO events (event_id, article_count, source_count)
-                    VALUES (%s, 1, 1)
-                    ON CONFLICT (event_id) DO NOTHING
-                """, (single_event_id,))
 
         logger.info("HDBSCAN formed %d new clusters from %d unassigned articles, %d remain as singles",
                      len(new_event_ids), len(unassigned),
                      len(unassigned) - len(assigned_unassigned))
 
-    # Phase 3: Update article rows in the database
-    for r in results:
-        cur.execute("""
-            UPDATE articles SET event_id = %s
-            WHERE article_id = %s
-        """, (r["event_id"], r["article_id"]))
-
-    conn.commit()
-    cur.close()
-    conn.close()
-    logger.info("Updated %d article rows in database", len(results))
-
-    # Write output NDJSON
+    # Write output NDJSON to MinIO only
     ndjson = "\n".join(json.dumps(r) for r in results)
     date_part = INPUT_KEY.split("/")[1]
     out_key = f"clusters/{date_part}/cluster_assignments.ndjson"

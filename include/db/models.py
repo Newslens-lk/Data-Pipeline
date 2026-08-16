@@ -63,9 +63,9 @@ class Article(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    # When our scraper fetched it.
-    scraped_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    # When our scraper fetched it. Nullable for manually prepared datasets.
+    scraped_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     # --- Bias classification results (filled by bias-classifier container) ---
@@ -78,10 +78,10 @@ class Article(Base):
     bias_scores: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # --- Embedding (filled by embedder container) ---
-    # Vector dimension must match the embedding model (768 for bge-base-en-v1.5).
+    # Vector dimension must match the embedding model (1024 for multilingual-e5-large).
     # When swapping to a different model, create a migration to alter the dimension
     # and re-embed all existing articles.
-    embedding = mapped_column(Vector(768), nullable=True)
+    embedding = mapped_column(Vector(1024), nullable=True)
 
     # --- Cluster assignment (filled by clustering container) ---
     # NULL if HDBSCAN labeled this article as noise (no event assigned).
@@ -119,7 +119,7 @@ class Article(Base):
             "embedding",
             postgresql_using="ivfflat",
             postgresql_with={"lists": 100},
-            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_ops={"embedding": "vector_l2_ops"},
         ),
     )
 
@@ -131,10 +131,12 @@ class Event(Base):
     event_id: Mapped[str] = mapped_column(Uuid, primary_key=True)
 
     # LLM-generated neutral summary synthesizing all articles in this cluster.
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    # Nullable because summaries are generated after clustering.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Topic label assigned from a fixed taxonomy (e.g. "politics", "technology").
-    topic: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable because topics are assigned after clustering.
+    topic: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # How many articles and distinct sources cover this event.
     # Stored denormalized for fast frontend queries (avoids COUNT joins).

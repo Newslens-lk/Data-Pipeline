@@ -3,5 +3,3 @@ logs/
 config/
 __pycache__/
 *.pyc
-.claude/
-venv/

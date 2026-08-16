@@ -134,9 +134,9 @@ def main():
 
     # Write output
     ndjson = "\n".join(json.dumps(r) for r in results)
-    out_key = INPUT_KEY.replace("clean/", "embeddings/").replace(
-        "clean_articles.ndjson", "embeddings.ndjson"
-    )
+    # Derive output key from input: cleaned/2026-08-15/articles.ndjson -> embeddings/2026-08-15/embeddings.ndjson
+    date_part = INPUT_KEY.split("/")[1]
+    out_key = f"embeddings/{date_part}/embeddings.ndjson"
     s3.put_object(Bucket=STORAGE_BUCKET, Key=out_key, Body=ndjson.encode("utf-8"))
 
     logger.info("Wrote %d embeddings to s3://%s/%s", len(results), STORAGE_BUCKET, out_key)

@@ -1,4 +1,2 @@
-torch
-transformers
 boto3
 modal

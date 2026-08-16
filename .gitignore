@@ -5,4 +5,5 @@ __pycache__/
 *.pyc
 .claude/
 venv/
+containers/bias-classifier-xgb/xgboost_model.joblib
 

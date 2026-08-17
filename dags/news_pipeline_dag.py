@@ -76,8 +76,9 @@ DOCKER_DEFAULTS = {
 @dag(
     dag_id="news_event_pipeline",
     description="Scrape -> clean -> embed -> bias + cluster -> load",
-    # Run every 4 hours: at minute 0 of hours 0, 4, 8, 12, 16, 20.
-    schedule="0 */4 * * *",
+    # No automatic schedule — trigger manually from the UI or CLI.
+    # Change to "0 */4 * * *" (every 4 hours) when ready for production.
+    schedule=None,
     # start_date is required by Airflow but with catchup=False it just
     # marks the earliest possible run — Airflow won't backfill old runs.
     start_date=dt.datetime(2026, 1, 1),

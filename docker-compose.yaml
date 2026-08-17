@@ -118,6 +118,10 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    # Add the host's Docker group (GID 984) so the Airflow user inside
+    # the container has permission to use the Docker socket.
+    group_add:
+      - "984"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

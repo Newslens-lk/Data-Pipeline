@@ -245,7 +245,7 @@ services:
     volumes:
       - news-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${NEWS_DB_USER}"]
+      test: ["CMD", "pg_isready", "-U", "${NEWS_DB_USER}", "-d", "${NEWS_DB_NAME}"]
       interval: 10s
       retries: 5
       start_period: 5s

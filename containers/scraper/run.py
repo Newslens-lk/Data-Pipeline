@@ -179,6 +179,104 @@ def scrape_hiru() -> list[dict]:
     return articles
 
 
+LANKADEEPA_URL = "https://www.lankadeepa.lk"
+LANKADEEPA_CATEGORIES = ["latest_news", "news", "politics", "business", "world_news"]
+
+
+def scrape_lankadeepa() -> list[dict]:
+    """Scrape Lankadeepa by extracting article links from homepage, then fetching each."""
+    import re
+
+    articles = []
+    scraped_at = dt.datetime.utcnow().isoformat()
+    seen_urls = set()
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(SCRAPE_TIMEOUT)
+
+    try:
+        logger.info("Lankadeepa: fetching homepage for article links")
+        resp = requests.get(LANKADEEPA_URL, timeout=30)
+        if resp.status_code != 200:
+            logger.warning("Lankadeepa: homepage returned %d", resp.status_code)
+            return articles
+
+        # Extract article URLs matching pattern: /category/slug/catid-artid
+        links = re.findall(
+            r'href="(https://www\.lankadeepa\.lk/[^"]+/\d+-\d+)"', resp.text
+        )
+        # Deduplicate preserving order
+        unique_links = list(dict.fromkeys(links))
+
+        # Filter to target categories only
+        filtered = []
+        for link in unique_links:
+            path = link.replace(f"{LANKADEEPA_URL}/", "")
+            category = path.split("/")[0]
+            if category in LANKADEEPA_CATEGORIES:
+                filtered.append(link)
+
+        logger.info("Lankadeepa: found %d article links (%d after category filter)",
+                     len(unique_links), len(filtered))
+
+        for url in filtered:
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            try:
+                art_resp = requests.get(url, timeout=30)
+                if art_resp.status_code != 200:
+                    continue
+
+                html = art_resp.text
+
+                # Title: <h1> tag
+                h1_match = re.search(r"<h1[^>]*>(.*?)</h1>", html, re.DOTALL)
+                if not h1_match:
+                    continue
+                title = re.sub(r"<[^>]+>", "", h1_match.group(1)).strip()
+
+                # Body: all <p> tags with Sinhala content
+                paras = re.findall(r"<p[^>]*>(.*?)</p>", html, re.DOTALL)
+                sinhala_paras = []
+                for p in paras:
+                    clean = re.sub(r"<[^>]+>", "", p).strip()
+                    # Replace HTML entities
+                    clean = clean.replace("&nbsp;", " ").replace("&zwj;", "\u200d")
+                    if re.search(r"[\u0D80-\u0DFF]", clean) and len(clean) > 20:
+                        sinhala_paras.append(clean)
+
+                body = "\n\n".join(sinhala_paras)
+                if len(body) < 50:
+                    continue
+
+                articles.append({
+                    "article_id": article_id(url),
+                    "source": "lankadeepa",
+                    "url": url,
+                    "title": title,
+                    "body": body,
+                    "language": "si",
+                    "published_at": None,  # no reliable timestamp in HTML
+                    "scraped_at": scraped_at,
+                })
+            except requests.RequestException:
+                logger.warning("Lankadeepa: failed to fetch %s", url)
+                continue
+
+        logger.info("Got %d articles from Lankadeepa", len(articles))
+    except SourceTimeout:
+        logger.warning("Timeout after %ds scraping Lankadeepa (got %d articles so far)",
+                       SCRAPE_TIMEOUT, len(articles))
+    except Exception:
+        logger.exception("Failed to scrape Lankadeepa")
+    finally:
+        signal.alarm(0)
+
+    return articles
+
+
 BBC_SINHALA_RSS = "https://feeds.bbci.co.uk/sinhala/rss.xml"
 BBC_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
@@ -283,21 +381,17 @@ def scrape_bbc() -> list[dict]:
 def scrape_all() -> list[dict]:
     from news_lk3.custom_newspapers import (
         DivainaLk,
-        LankadeepaLk,
     )
-
-    source_classes = {
-        "DivainaLk": DivainaLk,
-        "LankadeepaLk": LankadeepaLk,
-    }
 
     all_articles = []
 
-    # lk_news sources
-    for name in SINHALA_SOURCES:
-        cls = source_classes[name]
-        logger.info("Scraping %s ...", name)
-        all_articles.extend(scrape_source(cls, name))
+    # lk_news sources (DivainaLk only — LankadeepaLk broken in lk_news)
+    logger.info("Scraping DivainaLk ...")
+    all_articles.extend(scrape_source(DivainaLk, "DivainaLk"))
+
+    # Lankadeepa (custom scraper, replaces broken lk_news LankadeepaLk)
+    logger.info("Scraping Lankadeepa ...")
+    all_articles.extend(scrape_lankadeepa())
 
     # Hiru News (custom scraper)
     logger.info("Scraping Hiru News ...")

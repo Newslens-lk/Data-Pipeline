@@ -183,6 +183,7 @@ LANKADEEPA_URL = "https://www.lankadeepa.lk"
 LANKADEEPA_CATEGORIES = ["latest_news", "news", "politics", "business", "world_news"]
 
 
+
 def scrape_lankadeepa() -> list[dict]:
     """Scrape Lankadeepa by extracting article links from homepage, then fetching each."""
     import re
@@ -271,6 +272,91 @@ def scrape_lankadeepa() -> list[dict]:
                        SCRAPE_TIMEOUT, len(articles))
     except Exception:
         logger.exception("Failed to scrape Lankadeepa")
+    finally:
+        signal.alarm(0)
+
+    return articles
+
+
+NEWSFIRST_API = "https://apisinhala.newsfirst.lk/post/sticky"
+NEWSFIRST_BASE_URL = "https://sinhala.newsfirst.lk"
+
+
+def scrape_newsfirst() -> list[dict]:
+    """Scrape NewsFirst Sinhala via their JSON API."""
+    import re
+
+    articles = []
+    scraped_at = dt.datetime.utcnow().isoformat()
+    seen_ids = set()
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(SCRAPE_TIMEOUT)
+
+    try:
+        logger.info("NewsFirst: fetching API")
+        resp = requests.get(NEWSFIRST_API, timeout=30)
+        if resp.status_code != 200:
+            logger.warning("NewsFirst: API returned %d", resp.status_code)
+            return articles
+
+        data = resp.json()
+
+        # API returns sections: latestPost, localPost, featuredPost, sportPost, worldPost, businessPost
+        for section, posts in data.items():
+            if not isinstance(posts, list):
+                continue
+
+            for post in posts:
+                post_id = str(post.get("id", ""))
+                if not post_id or post_id in seen_ids:
+                    continue
+                seen_ids.add(post_id)
+
+                title_obj = post.get("title", {})
+                title = title_obj.get("rendered", "") if isinstance(title_obj, dict) else str(title_obj)
+                title = re.sub(r"<[^>]+>", "", title).strip()
+
+                content_obj = post.get("content", {})
+                content_html = content_obj.get("rendered", "") if isinstance(content_obj, dict) else str(content_obj)
+                body = re.sub(r"<[^>]+>", "", content_html).strip()
+                body = body.replace("&nbsp;", " ").replace("&#8230;", "...")
+
+                if len(body) < 50:
+                    continue
+
+                # Build URL from guid
+                guid_obj = post.get("guid", {})
+                url = guid_obj.get("rendered", "") if isinstance(guid_obj, dict) else str(guid_obj)
+
+                # Parse date (format: "01-09-2026T9:36 AM")
+                published_at = None
+                date_str = post.get("date", "")
+                if date_str:
+                    try:
+                        published_at = dt.datetime.strptime(
+                            date_str, "%d-%m-%YT%I:%M %p"
+                        ).isoformat()
+                    except ValueError:
+                        pass
+
+                articles.append({
+                    "article_id": article_id(url) if url else post_id,
+                    "source": "newsfirst",
+                    "url": url,
+                    "title": title,
+                    "body": body,
+                    "language": "si",
+                    "published_at": published_at,
+                    "scraped_at": scraped_at,
+                })
+
+        logger.info("Got %d articles from NewsFirst", len(articles))
+    except SourceTimeout:
+        logger.warning("Timeout after %ds scraping NewsFirst (got %d articles so far)",
+                       SCRAPE_TIMEOUT, len(articles))
+    except Exception:
+        logger.exception("Failed to scrape NewsFirst")
     finally:
         signal.alarm(0)
 
@@ -396,6 +482,10 @@ def scrape_all() -> list[dict]:
     # Hiru News (custom scraper)
     logger.info("Scraping Hiru News ...")
     all_articles.extend(scrape_hiru())
+
+    # NewsFirst Sinhala (JSON API)
+    logger.info("Scraping NewsFirst ...")
+    all_articles.extend(scrape_newsfirst())
 
     # BBC Sinhala (RSS + full article fetch)
     logger.info("Scraping BBC Sinhala ...")

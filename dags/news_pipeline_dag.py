@@ -233,3 +233,6 @@ def news_event_pipeline():
 
 
 news_event_pipeline()
+
+
+

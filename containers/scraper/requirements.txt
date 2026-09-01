@@ -4,6 +4,9 @@ scraper-nuuuwan
 # S3/MinIO access
 boto3
 
+# Hiru News scraper (JSON API, no HTML parsing needed)
+requests
+
 # Selenium for JS-rendered sources (e.g. AdaDeranaSinhalaLk)
 selenium
 webdriver-manager

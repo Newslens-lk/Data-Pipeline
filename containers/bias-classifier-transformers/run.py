@@ -15,7 +15,7 @@ Environment variables:
     STORAGE_BUCKET        - bucket name
     AWS_ACCESS_KEY_ID     - S3/MinIO access key
     AWS_SECRET_ACCESS_KEY - S3/MinIO secret key
-    MODEL_URI             - HuggingFace model path or S3 key (default: models/bias-classifier-helabert)
+    MODEL_REPO            - HuggingFace repo ID (default: sychpra/helabert-bias-classifier)
     BATCH_SIZE            - inference batch size (default: 32)
     USE_MODAL             - "true" to use Modal remote GPU (default: "false")
 """
@@ -33,9 +33,11 @@ logger = logging.getLogger(__name__)
 INPUT_KEY = os.environ["INPUT_KEY"]
 STORAGE_ENDPOINT = os.environ["STORAGE_ENDPOINT"]
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
-MODEL_URI = os.environ.get("MODEL_URI", "models/bias-classifier-helabert")
+MODEL_REPO = os.environ.get("MODEL_REPO", "sychpra/helabert-bias-classifier")
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "32"))
 USE_MODAL = os.environ.get("USE_MODAL", "false").lower() == "true"
+MAX_LENGTH = 512
+NUM_LABELS = 5
 
 LABELS = ["far_left", "left", "center", "right", "far_right"]
 
@@ -53,27 +55,79 @@ def get_s3_client():
 
 def load_model():
     import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    import torch.nn as nn
+    from huggingface_hub import hf_hub_download
+    from transformers import BertModel
 
-    logger.info("Loading HelaBERT model locally: %s", MODEL_URI)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_URI)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_URI)
-    model.eval()
+    logger.info("Loading HelaBERT model locally from: %s", MODEL_REPO)
+
+    # Download files from HF Hub
+    bert_dir = hf_hub_download(MODEL_REPO, "bert/config.json")
+    bert_dir = bert_dir.rsplit("/", 1)[0]
+    hf_hub_download(MODEL_REPO, "bert/model.safetensors")
+    sp_path = hf_hub_download(MODEL_REPO, "tokenizer/unigram_32000_0.9995.model")
+    head_path = hf_hub_download(MODEL_REPO, "classifier_head.pt")
+
+    # Load SentencePiece tokenizer
+    import sentencepiece as spm
+    sp = spm.SentencePieceProcessor()
+    sp.Load(sp_path)
+
+    # Load BERT encoder
+    bert = BertModel.from_pretrained(bert_dir)
+
+    # Build full model
+    class HelaBERTClassifier(nn.Module):
+        def __init__(self, bert, num_labels=NUM_LABELS):
+            super().__init__()
+            self.bert = bert
+            self.dropout = nn.Dropout(0.1)
+            self.classifier = nn.Linear(768, num_labels)
+
+        def forward(self, input_ids, attention_mask):
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            hidden_states = outputs.last_hidden_state
+            mask = attention_mask.unsqueeze(-1).float()
+            pooled = (hidden_states * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+            pooled = self.dropout(pooled)
+            return self.classifier(pooled)
+
+    model = HelaBERTClassifier(bert)
+    model.classifier.load_state_dict(torch.load(head_path, map_location="cpu"))
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
+    model.to(device).eval()
     logger.info("Model loaded on %s", device)
-    return tokenizer, model, device
+    return sp, model, device
 
 
-def classify_batch_local(texts: list[str], tokenizer, model, device) -> list[list[float]]:
+def tokenize_batch(texts: list[str], sp, device) -> tuple:
     import torch
 
-    inputs = tokenizer(
-        texts, padding=True, truncation=True, max_length=512, return_tensors="pt"
-    ).to(device)
+    all_ids = []
+    all_masks = []
+    for text in texts:
+        ids = sp.encode(text, out_type=int)
+        ids = ids[:MAX_LENGTH]
+        mask = [1] * len(ids)
+        pad_len = MAX_LENGTH - len(ids)
+        ids += [sp.pad_id()] * pad_len
+        mask += [0] * pad_len
+        all_ids.append(ids)
+        all_masks.append(mask)
+
+    return (
+        torch.tensor(all_ids, dtype=torch.long).to(device),
+        torch.tensor(all_masks, dtype=torch.long).to(device),
+    )
+
+
+def classify_batch_local(texts: list[str], sp, model, device) -> list[list[float]]:
+    import torch
+
+    input_ids, attention_mask = tokenize_batch(texts, sp, device)
 
     with torch.no_grad():
-        logits = model(**inputs).logits
+        logits = model(input_ids, attention_mask)
         probs = torch.softmax(logits, dim=-1).cpu().tolist()
 
     return probs
@@ -107,7 +161,7 @@ def main():
     if USE_MODAL:
         logger.info("Using Modal remote GPU for inference")
     else:
-        tokenizer, model, device = load_model()
+        sp, model, device = load_model()
 
     # Classify in batches
     results = []
@@ -117,7 +171,7 @@ def main():
         if USE_MODAL:
             batch_probs = classify_batch_modal(batch)
         else:
-            batch_probs = classify_batch_local(batch, tokenizer, model, device)
+            batch_probs = classify_batch_local(batch, sp, model, device)
 
         for j, probs in enumerate(batch_probs):
             scores = {label: float(probs[k]) for k, label in enumerate(LABELS)}

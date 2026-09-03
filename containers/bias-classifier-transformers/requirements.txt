@@ -1,2 +1,4 @@
 boto3
 modal
+huggingface_hub
+sentencepiece

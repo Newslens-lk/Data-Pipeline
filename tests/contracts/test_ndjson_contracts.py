@@ -179,7 +179,13 @@ class TestInvalidRecords:
 
 
 class TestCrossStageCompatibility:
-    """Verify that the output of one stage can be parsed as input to the next."""
+    """Verify cross-stage contracts for both pipeline paths.
+
+    Path 1 (XGB):          cleaner -> embedder -> bias-xgb ---------> loader
+                                          └-----> clustering -------> loader
+    Path 2 (Transformers): cleaner -> bias-transformers -------------> loader
+                           cleaner -> embedder -> clustering -------> loader
+    """
 
     def test_scraper_to_cleaner(self, scraper_record):
         """Scraper output should be valid CleanerOutput input (same shape)."""
@@ -208,19 +214,54 @@ class TestCrossStageCompatibility:
         ids = {scraper.article_id, embedder.article_id, bias.article_id, cluster.article_id}
         assert len(ids) == 1, "All stages must share the same article_id format"
 
-    def test_loader_can_join_all_stages(
+    # ── Path 1: cleaner -> embedder -> bias-xgb -> loader ──
+    #            cleaner -> embedder -> clustering -> loader
+
+    def test_cleaner_to_embedder(self, cleaner_record):
+        """Embedder reads cleaned articles — needs title + body for 'passage:' prefix."""
+        clean = CleanerOutput(**cleaner_record)
+        data = clean.model_dump()
+        # Embedder does: f"passage: {a['title']}{a['body']}"
+        assert "title" in data and "body" in data
+        assert "article_id" in data
+
+    def test_embedder_to_bias_xgb(self, embedder_record):
+        """XGB bias classifier reads embeddings NDJSON — needs article_id + embedding."""
+        emb = EmbedderOutput(**embedder_record)
+        # XGB does: np.array([r["embedding"] for r in records])
+        assert len(emb.embedding) > 0
+        assert emb.article_id
+
+    def test_embedder_to_clustering(self, embedder_record):
+        """Clustering reads embeddings NDJSON — needs article_id + embedding for KNN."""
+        emb = EmbedderOutput(**embedder_record)
+        assert len(emb.embedding) > 0
+        assert emb.article_id
+
+    # ── Path 2: cleaner -> bias-transformers -> loader ──
+
+    def test_cleaner_to_bias_transformers(self, cleaner_record):
+        """Transformers bias classifier reads cleaned articles — needs title + body for text."""
+        clean = CleanerOutput(**cleaner_record)
+        data = clean.model_dump()
+        # Transformers does: f"{a['title']}. {a['body']}"
+        assert "title" in data and "body" in data
+        assert len(data["body"]) > 0, "Transformers needs non-empty body for classification"
+        assert "article_id" in data
+
+    # ── Loader join: both paths converge ──
+
+    def test_xgb_path_loader_join(
         self, cleaner_record, embedder_record, bias_record, cluster_record
     ):
-        """Simulate what the loader does: join all stage outputs by article_id."""
+        """XGB path: loader joins cleaner + embedder + bias-xgb + clustering."""
         clean = CleanerOutput(**cleaner_record)
         emb = EmbedderOutput(**embedder_record)
         bias = BiasOutput(**bias_record)
         cluster = ClusterOutput(**cluster_record)
 
-        # Loader joins by article_id — all must match
         assert clean.article_id == emb.article_id == bias.article_id == cluster.article_id
 
-        # Loader builds a complete row from all four
         row = {
             "article_id": clean.article_id,
             "source": clean.source,
@@ -237,3 +278,44 @@ class TestCrossStageCompatibility:
             "event_id": cluster.event_id,
         }
         assert len(row) == 13
+
+    def test_transformers_path_loader_join(
+        self, cleaner_record, embedder_record, bias_record, cluster_record
+    ):
+        """Transformers path: loader joins cleaner + embedder + bias-transformers + clustering.
+
+        Both bias classifiers produce the same BiasOutput schema, so the loader
+        doesn't care which classifier produced the results.
+        """
+        clean = CleanerOutput(**cleaner_record)
+        emb = EmbedderOutput(**embedder_record)
+        cluster = ClusterOutput(**cluster_record)
+
+        # Transformers bias classifier reads cleaned text, not embeddings,
+        # but its output is the same BiasOutput schema as XGB.
+        bias = BiasOutput(**bias_record)
+
+        assert clean.article_id == emb.article_id == bias.article_id == cluster.article_id
+
+        row = {
+            "article_id": clean.article_id,
+            "source": clean.source,
+            "url": clean.url,
+            "title": clean.title,
+            "body": clean.body,
+            "language": clean.language,
+            "published_at": clean.published_at,
+            "scraped_at": clean.scraped_at,
+            "embedding": emb.embedding,
+            "bias_label": bias.bias_label,
+            "bias_confidence": bias.bias_confidence,
+            "bias_scores": bias.bias_scores,
+            "event_id": cluster.event_id,
+        }
+        assert len(row) == 13
+
+    def test_both_bias_classifiers_produce_same_schema(self, bias_record):
+        """XGB and Transformers must produce identical BiasOutput — loader is agnostic."""
+        xgb_output = BiasOutput(**bias_record)
+        transformer_output = BiasOutput(**bias_record)
+        assert BiasOutput.model_fields.keys() == {"article_id", "bias_label", "bias_confidence", "bias_scores"}

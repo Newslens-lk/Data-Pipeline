@@ -1,6 +1,6 @@
 # NewsLens Pipeline - Test Suite
 
-107 tests across 3 layers covering all 6 pipeline containers and shared config.
+132 tests across 4 layers covering all 6 pipeline containers and shared config.
 
 ## Quick Start
 
@@ -12,9 +12,10 @@ source venv/bin/activate
 python -m pytest tests/ -v
 
 # Run a single layer
-python -m pytest tests/unit/ -v
 python -m pytest tests/contracts/ -v
+python -m pytest tests/unit/ -v
 python -m pytest tests/integration/ -v
+python -m pytest tests/e2e/ -v
 
 # Run tests for a specific container
 python -m pytest tests/unit/test_cleaner.py -v
@@ -49,14 +50,17 @@ tests/
 │   ├── test_config.py                   # Config defaults and immutability
 │   └── test_loader.py                   # Join logic, event stats, embedding format
 │
-└── integration/                         # Layer 3: Container main() flow tests (19 tests)
-    ├── conftest.py                      # moto S3 mock, seed/read NDJSON helpers
-    ├── test_cleaner_integration.py      # S3 read -> clean -> S3 write
-    ├── test_embedder_integration.py     # S3 read -> embed (mock model) -> S3 write
-    ├── test_bias_xgb_integration.py     # S3 read -> classify (mock XGB) -> S3 write
-    ├── test_bias_transformers_integration.py  # S3 read -> classify (mock HelaBERT) -> S3 write
-    ├── test_clustering_integration.py   # S3 read -> KNN/HDBSCAN (mock DB) -> S3 write
-    └── test_loader_integration.py       # S3 read all 4 stages -> join -> DB write (mock)
+├── integration/                         # Layer 3: Container main() flow tests (19 tests)
+│   ├── conftest.py                      # moto S3 mock, seed/read NDJSON helpers
+│   ├── test_cleaner_integration.py      # S3 read -> clean -> S3 write
+│   ├── test_embedder_integration.py     # S3 read -> embed (mock model) -> S3 write
+│   ├── test_bias_xgb_integration.py     # S3 read -> classify (mock XGB) -> S3 write
+│   ├── test_bias_transformers_integration.py  # S3 read -> classify (mock HelaBERT) -> S3 write
+│   ├── test_clustering_integration.py   # S3 read -> KNN/HDBSCAN (mock DB) -> S3 write
+│   └── test_loader_integration.py       # S3 read all 4 stages -> join -> DB write (mock)
+│
+└── e2e/                                 # Layer 4: Full pipeline end-to-end tests (25 tests)
+    └── test_full_pipeline.py            # Both pipeline paths (XGB + Transformers)
 ```
 
 ## Test Layers
@@ -113,6 +117,30 @@ Test each container's complete `main()` flow: read from S3, process, write to S3
 | `test_clustering_integration.py` | clustering | All-new articles (HDBSCAN/single), KNN match to existing cluster, mixed KNN+single |
 | `test_loader_integration.py` | loader | Full 4-file join, source dedup, event aggregation, article rows with all 13 fields |
 
+### Layer 4: End-to-End Tests (25 tests)
+
+Run every container's `main()` in sequence with a single shared moto S3 instance. The full NDJSON read/write chain between stages is real — only ML models and DB are mocked. Tests both pipeline paths end-to-end.
+
+**Test classes:**
+
+| Class | Pipeline Path | Tests |
+|-------|---------------|-------|
+| `TestFullPipelineXGB` | cleaner → embedder → bias-xgb → clustering → loader | 17 |
+| `TestFullPipelineTransformers` | cleaner → embedder → bias-transformers → clustering → loader | 8 |
+
+Each class uses an `autouse` fixture that runs the full pipeline once, storing intermediate results. Individual tests then validate specific stage outputs:
+
+- **Cleaner**: short article filtering, text normalization, schema validation
+- **Embedder**: count matches, article ID preservation, 1024-dim vectors
+- **Bias**: count matches, valid labels, schema validation
+- **Clustering**: count matches, valid event UUIDs, schema validation
+- **Loader**: 3 DB calls (sources/events/articles), all 13 fields present, commit called
+- **Cross-stage**: article IDs consistent across all 5 stages
+
+The `TestFullPipelineTransformers` class additionally verifies that:
+- The transformers classifier reads cleaned text (not embeddings)
+- The loader output schema is identical regardless of which bias classifier was used
+
 ## How Container Imports Work
 
 Each container has its own `run.py` with top-level env var reads and dependency imports. The test suite handles this with two mechanisms in `conftest.py`:
@@ -133,7 +161,7 @@ def test_something(cleaner):
     assert result == "hello"
 ```
 
-## Integration Test Mocking Strategy
+## Mocking Strategy
 
 | External Dependency | Mock Tool | Approach |
 |---------------------|-----------|----------|
@@ -150,3 +178,4 @@ When adding a new pipeline stage or modifying an existing one:
 2. **Add contract tests** in `contracts/test_ndjson_contracts.py` for the new schema and its cross-stage compatibility
 3. **Add unit tests** in `unit/test_<container>.py` for any new pure functions
 4. **Add integration tests** in `integration/test_<container>_integration.py` testing the full `main()` flow
+5. **Update e2e tests** in `e2e/test_full_pipeline.py` if the new stage changes the pipeline flow

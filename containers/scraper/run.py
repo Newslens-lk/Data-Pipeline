@@ -7,10 +7,10 @@ Prints the output key to stdout for Airflow to capture via XCom.
 
 Environment variables:
     RUN_DATE          - date string for the output key prefix (e.g. "2026-08-15")
-    STORAGE_ENDPOINT  - S3/MinIO endpoint URL (e.g. "http://minio:9000")
+    STORAGE_ENDPOINT  - S3/MinIO endpoint URL (e.g. "http://minio:9000"). Omit for real AWS S3.
     STORAGE_BUCKET    - bucket name (e.g. "newslens-pipeline")
-    AWS_ACCESS_KEY_ID - S3/MinIO access key
-    AWS_SECRET_ACCESS_KEY - S3/MinIO secret key
+    AWS_ACCESS_KEY_ID - S3/MinIO access key (only needed when STORAGE_ENDPOINT is set)
+    AWS_SECRET_ACCESS_KEY - S3/MinIO secret key (only needed when STORAGE_ENDPOINT is set)
     SCRAPE_TIMEOUT    - max seconds per source (default: 300)
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 RUN_DATE = os.environ.get("RUN_DATE", dt.date.today().isoformat())
-STORAGE_ENDPOINT = os.environ["STORAGE_ENDPOINT"]
+STORAGE_ENDPOINT = os.environ.get("STORAGE_ENDPOINT")  # None = real AWS S3
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 SCRAPE_TIMEOUT = int(os.environ.get("SCRAPE_TIMEOUT", "300"))
 HIRU_MAX_PAGES = int(os.environ.get("HIRU_MAX_PAGES", "5"))
@@ -50,12 +50,16 @@ def _timeout_handler(signum, frame):
 
 
 def get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=STORAGE_ENDPOINT,
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    )
+    if STORAGE_ENDPOINT:
+        # Local dev: explicit MinIO credentials
+        return boto3.client(
+            "s3",
+            endpoint_url=STORAGE_ENDPOINT,
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+    # AWS: uses IAM role credentials automatically
+    return boto3.client("s3")
 
 
 def article_id(url: str) -> str:

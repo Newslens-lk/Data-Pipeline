@@ -38,7 +38,7 @@ CLEAN_KEY = os.environ["CLEAN_KEY"]
 EMBEDDINGS_KEY = os.environ["EMBEDDINGS_KEY"]
 BIAS_KEY = os.environ["BIAS_KEY"]
 CLUSTERS_KEY = os.environ["CLUSTERS_KEY"]
-STORAGE_ENDPOINT = os.environ["STORAGE_ENDPOINT"]
+STORAGE_ENDPOINT = os.environ.get("STORAGE_ENDPOINT")  # None = real AWS S3
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 
 DB_HOST = os.environ.get("DB_HOST", "news-db")
@@ -49,12 +49,16 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "news")
 
 
 def get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=STORAGE_ENDPOINT,
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    )
+    if STORAGE_ENDPOINT:
+        # Local dev: explicit MinIO credentials
+        return boto3.client(
+            "s3",
+            endpoint_url=STORAGE_ENDPOINT,
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+    # AWS: uses IAM role credentials automatically
+    return boto3.client("s3")
 
 
 def read_ndjson(s3, key: str) -> list[dict]:

@@ -43,7 +43,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 INPUT_KEY = os.environ["INPUT_KEY"]
-STORAGE_ENDPOINT = os.environ["STORAGE_ENDPOINT"]
+STORAGE_ENDPOINT = os.environ.get("STORAGE_ENDPOINT")  # None = real AWS S3
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 
 DB_HOST = os.environ.get("DB_HOST", "news-db")
@@ -58,12 +58,16 @@ MAJORITY_RATIO = float(os.environ.get("MAJORITY_RATIO", "0.6"))
 
 
 def get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=STORAGE_ENDPOINT,
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    )
+    if STORAGE_ENDPOINT:
+        # Local dev: explicit MinIO credentials
+        return boto3.client(
+            "s3",
+            endpoint_url=STORAGE_ENDPOINT,
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+    # AWS: uses IAM role credentials automatically
+    return boto3.client("s3")
 
 
 def get_db_connection():

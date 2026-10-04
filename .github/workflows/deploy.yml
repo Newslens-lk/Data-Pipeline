@@ -20,6 +20,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pytest
+          pip install boto3 modal huggingface_hub sentencepiece joblib xgboost numpy scikit-learn hdbscan psycopg2-binary requests selenium webdriver-manager beautifulsoup4 scraper-nuuuwan
 
       - name: Run unit tests
         run: pytest tests/unit/ -v

@@ -33,7 +33,7 @@ MIN_BODY_CHARS = int(os.environ.get("MIN_BODY_CHARS", "50"))
 
 # Zero-width and invisible characters common in web-scraped Sinhala text
 _INVISIBLE_RE = re.compile(
-    "[\u200b\u200c\u200d\u200e\u200f\u2060\u2061\u2062\u2063\u2064\ufeff]"
+    "[\u200b\u200c\u200e\u200f\u2060\u2061\u2062\u2063\u2064\ufeff]"
 )
 _WHITESPACE_RE = re.compile(r"\s+")
 _HTML_ENTITIES = {

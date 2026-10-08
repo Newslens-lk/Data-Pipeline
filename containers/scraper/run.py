@@ -287,7 +287,14 @@ NEWSFIRST_BASE_URL = "https://sinhala.newsfirst.lk"
 
 
 def scrape_newsfirst() -> list[dict]:
-    """Scrape NewsFirst Sinhala via their JSON API."""
+    """Scrape NewsFirst Sinhala via their JSON API.
+
+    The API at /post/sticky returns sections with two shapes:
+      - stickyPost: nested {postResponseDto: [{postResponseDto: [...]}]}
+      - latestPost, localPost, featuredPost, etc.: flat lists of post dicts
+    Each post has full article HTML in content.rendered, a post_url slug,
+    and an images dict with multiple sizes.
+    """
     import re
 
     articles = []
@@ -306,54 +313,63 @@ def scrape_newsfirst() -> list[dict]:
 
         data = resp.json()
 
-        # API returns sections: latestPost, localPost, featuredPost, sportPost, worldPost, businessPost
-        for section, posts in data.items():
-            if not isinstance(posts, list):
+        # Collect all posts from every section, handling both structures.
+        all_posts = []
+        for section_name, section_data in data.items():
+            if isinstance(section_data, list):
+                # Flat list: latestPost, localPost, featuredPost, etc.
+                all_posts.extend(section_data)
+            elif isinstance(section_data, dict):
+                # Nested: stickyPost -> postResponseDto -> [{postResponseDto: [...]}]
+                for group in section_data.get("postResponseDto", []):
+                    if isinstance(group, dict):
+                        inner = group.get("postResponseDto", [])
+                        if isinstance(inner, list):
+                            all_posts.extend(inner)
+
+        for post in all_posts:
+            post_id = str(post.get("id", ""))
+            if not post_id or post_id in seen_ids:
+                continue
+            seen_ids.add(post_id)
+
+            title_obj = post.get("title", {})
+            title = title_obj.get("rendered", "") if isinstance(title_obj, dict) else str(title_obj)
+            title = re.sub(r"<[^>]+>", "", title).strip()
+
+            content_obj = post.get("content", {})
+            content_html = content_obj.get("rendered", "") if isinstance(content_obj, dict) else str(content_obj)
+            body = re.sub(r"<[^>]+>", "", content_html).strip()
+            body = body.replace("&nbsp;", " ").replace("&#8230;", "...")
+
+            if len(body) < 50:
                 continue
 
-            for post in posts:
-                post_id = str(post.get("id", ""))
-                if not post_id or post_id in seen_ids:
-                    continue
-                seen_ids.add(post_id)
+            # Build URL from post_url slug (guid.rendered is unreliable).
+            post_url_slug = post.get("post_url", "")
+            url = f"{NEWSFIRST_BASE_URL}/{post_url_slug}" if post_url_slug else ""
 
-                title_obj = post.get("title", {})
-                title = title_obj.get("rendered", "") if isinstance(title_obj, dict) else str(title_obj)
-                title = re.sub(r"<[^>]+>", "", title).strip()
+            # Parse date (format: "08-10-2026T5:32 PM")
+            published_at = None
+            date_str = post.get("date", "")
+            if date_str:
+                try:
+                    published_at = dt.datetime.strptime(
+                        date_str, "%d-%m-%YT%I:%M %p"
+                    ).isoformat()
+                except ValueError:
+                    pass
 
-                content_obj = post.get("content", {})
-                content_html = content_obj.get("rendered", "") if isinstance(content_obj, dict) else str(content_obj)
-                body = re.sub(r"<[^>]+>", "", content_html).strip()
-                body = body.replace("&nbsp;", " ").replace("&#8230;", "...")
-
-                if len(body) < 50:
-                    continue
-
-                # Build URL from guid
-                guid_obj = post.get("guid", {})
-                url = guid_obj.get("rendered", "") if isinstance(guid_obj, dict) else str(guid_obj)
-
-                # Parse date (format: "01-09-2026T9:36 AM")
-                published_at = None
-                date_str = post.get("date", "")
-                if date_str:
-                    try:
-                        published_at = dt.datetime.strptime(
-                            date_str, "%d-%m-%YT%I:%M %p"
-                        ).isoformat()
-                    except ValueError:
-                        pass
-
-                articles.append({
-                    "article_id": article_id(url) if url else post_id,
-                    "source": "newsfirst",
-                    "url": url,
-                    "title": title,
-                    "body": body,
-                    "language": "si",
-                    "published_at": published_at,
-                    "scraped_at": scraped_at,
-                })
+            articles.append({
+                "article_id": article_id(url) if url else post_id,
+                "source": "newsfirst",
+                "url": url,
+                "title": title,
+                "body": body,
+                "language": "si",
+                "published_at": published_at,
+                "scraped_at": scraped_at,
+            })
 
         logger.info("Got %d articles from NewsFirst", len(articles))
     except SourceTimeout:

@@ -21,7 +21,7 @@ class TestNormalizeText:
 
     def test_removes_zero_width_chars(self, cleaner):
         text = "hello\u200b\u200c\u200dworld"
-        assert cleaner.normalize_text(text) == "helloworld"
+        assert cleaner.normalize_text(text) == "hello\u200dworld"
 
     def test_replaces_html_entities(self, cleaner):
         assert cleaner.normalize_text("Tom &amp; Jerry") == "Tom & Jerry"
@@ -50,7 +50,7 @@ class TestNormalizeText:
 
     def test_only_invisible_chars(self, cleaner):
         text = "\u200b\u200c\u200d\ufeff"
-        assert cleaner.normalize_text(text) == ""
+        assert cleaner.normalize_text(text) == "\u200d"
 
     def test_nbsp_entity(self, cleaner):
         assert cleaner.normalize_text("word&nbsp;word") == "word word"

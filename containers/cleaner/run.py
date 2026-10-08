@@ -90,11 +90,13 @@ def deduplicate(articles: list[dict]) -> list[dict]:
             continue
         seen_ids.add(a["article_id"])
 
-        # Near-duplicate by first 300 chars of body
-        shingle = re.sub(r"\W+", "", a["body"][:300].lower())
-        if shingle in seen_shingles:
-            continue
-        seen_shingles.add(shingle)
+        # Near-duplicate by first 300 chars of body (skip for NewsFirst —
+        # their articles share a common prefix that causes false positives).
+        if a.get("source") != "newsfirst":
+            shingle = re.sub(r"\W+", "", a["body"][:300].lower())
+            if shingle in seen_shingles:
+                continue
+            seen_shingles.add(shingle)
 
         unique.append(a)
 

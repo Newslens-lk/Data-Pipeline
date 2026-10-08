@@ -45,3 +45,7 @@ jobs:
             ./build_images.sh
             sudo docker compose down airflow-scheduler
             sudo docker compose up -d
+            echo "Waiting for scheduler to be ready..."
+            sleep 30
+            sudo docker compose exec -T airflow-scheduler airflow dags reserialize
+            sudo docker compose exec -T airflow-scheduler airflow dags unpause news_event_pipeline

@@ -118,7 +118,7 @@ def _make_task(*, task_id: str, image: str, environment: dict, do_xcom_push: boo
 @dag(
     dag_id="news_event_pipeline",
     description="Scrape -> clean -> embed -> bias + cluster -> load",
-    schedule="30 1 * * *",  # 7:00 AM IST (UTC+5:30) daily
+    schedule="30 18 * * *",  # 12:00 AM IST (midnight, UTC+5:30) daily
     start_date=dt.datetime(2026, 1, 1),
     catchup=False,
     default_args=default_args,
